@@ -1,0 +1,18 @@
+openapi: 3.0.3
+info:
+  title: Furry Friends Pet Store API
+  version: '1.0.0'
+  description: Complete pet store and animal management system
+paths:
+  /pets:
+    get:
+      operationId: getAllPets
+      summary: Get all pets in the store
+  /animals:
+    get:
+      operationId: listAnimals  
+      summary: List available animals
+  /inventory:
+    get:
+      operationId: getStoreInventory
+      summary: Check pet store inventory

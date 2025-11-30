@@ -1,0 +1,134 @@
+openapi: 3.0.3
+info:
+  title: Critter Catalog API
+  version: 1.0.0
+servers:
+  - url: https://api.crittercatalog.io/v1
+paths:
+  /critters:
+    get:
+      operationId: listCritters
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Critter'
+    post:
+      operationId: addCritter
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Critter'
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Critter'
+  /critters/{critterId}:
+    get:
+      operationId: getCritter
+      parameters:
+        - name: critterId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Critter'
+    put:
+      operationId: updateCritter
+      parameters:
+        - name: critterId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Critter'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Critter'
+    delete:
+      operationId: removeCritter
+      parameters:
+        - name: critterId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204': {}
+  /purchases:
+    get:
+      operationId: listPurchases
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Purchase'
+    post:
+      operationId: createPurchase
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Purchase'
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Purchase'
+components:
+  schemas:
+    Critter:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        category:
+          type: string
+        status:
+          type: string
+          enum:
+            - available
+            - pending
+            - sold
+    Purchase:
+      type: object
+      properties:
+        id:
+          type: integer
+        critterId:
+          type: integer
+        quantity:
+          type: integer
+        shipDate:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum:
+            - placed
+            - approved
+            - delivered

@@ -1,0 +1,10 @@
+openapi: 3.0.3
+info:
+  title: Test Pet Shop API
+  version: '1.0.0'
+  description: A simple pet store API for testing
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      summary: List all pets

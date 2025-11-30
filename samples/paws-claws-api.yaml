@@ -1,0 +1,21 @@
+openapi: 3.0.3
+info:
+  title: Paws and Claws Pet Center API
+  version: '1.0.0'
+  description: Complete pet management system for pet stores and animal shelters
+paths:
+  /pets:
+    get:
+      operationId: getAllPets
+      summary: Get all available pets
+    post:
+      operationId: addNewPet
+      summary: Add a new pet to inventory
+  /animals:
+    get:
+      operationId: listAnimals
+      summary: List all animals
+  /adoptions:
+    post:
+      operationId: createAdoption
+      summary: Process pet adoption

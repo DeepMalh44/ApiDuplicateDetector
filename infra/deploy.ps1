@@ -111,12 +111,18 @@ if ($rgExists -eq "false") {
 }
 Write-Host "Resource group: $ResourceGroupName" -ForegroundColor Green
 
-# Verify API Center exists
+# Verify API Center exists, create if not
 $apiCenter = az apic show --name $ApiCenterName --resource-group $ResourceGroupName 2>$null | ConvertFrom-Json
 if (-not $apiCenter) {
-    throw "API Center '$ApiCenterName' not found in resource group '$ResourceGroupName'. Please create it first."
+    Write-Host "API Center '$ApiCenterName' not found. Creating..." -ForegroundColor Yellow
+    az apic create --name $ApiCenterName --resource-group $ResourceGroupName --location $Location | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to create API Center '$ApiCenterName'"
+    }
+    Write-Host "API Center created: $ApiCenterName" -ForegroundColor Green
+} else {
+    Write-Host "API Center: $ApiCenterName" -ForegroundColor Green
 }
-Write-Host "API Center: $ApiCenterName" -ForegroundColor Green
 
 Write-Host "Prerequisites verified!" -ForegroundColor Green
 
@@ -201,18 +207,54 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "Function App code deployed!" -ForegroundColor Green
 
-# Step 5: Restart Function App to apply settings
+# Step 5: Restart Function App and wait for functions to load
 Write-Host ""
 Write-Host "Step 5: Restarting Function App..." -ForegroundColor Yellow
 
 az functionapp restart --name $functionAppName --resource-group $ResourceGroupName
-Start-Sleep -Seconds 10
+Write-Host "Waiting 30 seconds for functions to load..." -ForegroundColor Yellow
+Start-Sleep -Seconds 30
 
 Write-Host "Function App restarted!" -ForegroundColor Green
 
-# Step 6: Verify deployment
+# Step 6: Create Event Grid Subscription (must be done AFTER function code is deployed)
 Write-Host ""
-Write-Host "Step 6: Verifying deployment..." -ForegroundColor Yellow
+Write-Host "Step 6: Creating Event Grid subscription..." -ForegroundColor Yellow
+
+$subscriptionId = (az account show --query id -o tsv)
+$eventGridTopicName = "$ApiCenterName-events"
+$functionResourceId = "/subscriptions/$subscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Web/sites/$functionAppName/functions/ApiDuplicateDetector"
+
+# Check if subscription already exists
+$existingSubscription = az eventgrid event-subscription show `
+    --name "api-duplicate-detector-subscription" `
+    --source-resource-id "/subscriptions/$subscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.ApiCenter/services/$ApiCenterName" `
+    2>$null
+
+if ($existingSubscription) {
+    Write-Host "Event Grid subscription already exists, updating..." -ForegroundColor Yellow
+    az eventgrid event-subscription delete `
+        --name "api-duplicate-detector-subscription" `
+        --source-resource-id "/subscriptions/$subscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.ApiCenter/services/$ApiCenterName" `
+        2>$null
+}
+
+az eventgrid event-subscription create `
+    --name "api-duplicate-detector-subscription" `
+    --source-resource-id "/subscriptions/$subscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.ApiCenter/services/$ApiCenterName" `
+    --endpoint-type azurefunction `
+    --endpoint $functionResourceId `
+    --included-event-types "Microsoft.ApiCenter.ApiDefinitionAdded"
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Warning: Event Grid subscription creation failed. You may need to create it manually." -ForegroundColor Yellow
+} else {
+    Write-Host "Event Grid subscription created!" -ForegroundColor Green
+}
+
+# Step 7: Verify deployment
+Write-Host ""
+Write-Host "Step 7: Verifying deployment..." -ForegroundColor Yellow
 
 $functions = az functionapp function list --name $functionAppName --resource-group $ResourceGroupName -o json | ConvertFrom-Json
 if ($functions.Count -gt 0) {

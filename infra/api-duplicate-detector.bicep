@@ -386,31 +386,8 @@ resource eventGridTopic 'Microsoft.EventGrid/systemTopics@2023-12-15-preview' = 
   }
 }
 
-// Event Grid Subscription - Uses Azure Function destination (no webhook validation issues)
-resource eventGridSubscription 'Microsoft.EventGrid/systemTopics/eventSubscriptions@2023-12-15-preview' = {
-  parent: eventGridTopic
-  name: 'api-duplicate-detector-subscription'
-  properties: {
-    destination: {
-      endpointType: 'AzureFunction'
-      properties: {
-        resourceId: '${functionApp.id}/functions/ApiDuplicateDetector'
-        maxEventsPerBatch: 1
-        preferredBatchSizeInKilobytes: 64
-      }
-    }
-    filter: {
-      includedEventTypes: [
-        'Microsoft.ApiCenter.ApiDefinitionAdded'
-      ]
-    }
-    eventDeliverySchema: 'EventGridSchema'
-    retryPolicy: {
-      maxDeliveryAttempts: 30
-      eventTimeToLiveInMinutes: 1440
-    }
-  }
-}
+// NOTE: Event Grid Subscription is created by deploy.ps1 AFTER function code is deployed
+// This avoids the chicken-and-egg problem where the subscription needs the function to exist
 
 // Email address for notifications
 @description('Email address for duplicate API detection alerts')

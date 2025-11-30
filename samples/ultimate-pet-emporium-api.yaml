@@ -1,0 +1,18 @@
+openapi: 3.0.3
+info:
+  title: Ultimate Pet Emporium API
+  version: '1.0.0'
+  description: Full-featured pet store and animal management API
+paths:
+  /pets:
+    get:
+      operationId: listAllPets
+      summary: List all pets available
+  /animals:
+    get:
+      operationId: getAnimals
+      summary: Get all animals
+  /store/inventory:
+    get:
+      operationId: storeInventory
+      summary: Get store inventory for pets
