@@ -1,146 +1,169 @@
 # API Duplicate Detector for Azure API Center
 
-An Azure Function that automatically detects duplicate APIs when they are registered in Azure API Center. It uses Event Grid triggers to monitor API definition changes and compares APIs using weighted similarity scoring.
+An Azure Function that automatically detects duplicate APIs when they are registered in Azure API Center. It uses semantic analysis with Azure OpenAI embeddings and Cosmos DB vector search to find similar APIs and sends email alerts when duplicates are detected.
 
 ## Features
 
-- **Event-Driven Detection**: Automatically triggered when APIs are added or updated in API Center
-- **Weighted Similarity Scoring**: Compares APIs using multiple factors:
-  - Path Similarity (40%) - Compares API endpoints and routes
-  - Schema Similarity (25%) - Compares request/response schemas
-  - Name Similarity (20%) - Compares API titles and names
-  - Description Similarity (15%) - Compares API descriptions
-- **Azure Monitor Alerts**: Sends email notifications when duplicates are detected
-- **Optional Semantic Analysis**: Supports Azure OpenAI embeddings for enhanced similarity detection
-- **Cosmos DB Vector Store**: Stores API embeddings for semantic search (optional)
+- **Event-Driven Detection**: Automatically triggered when APIs are added in API Center via Event Grid
+- **Semantic Analysis**: Uses Azure OpenAI `text-embedding-ada-002` to generate API embeddings
+- **Vector Search**: Stores embeddings in Cosmos DB for efficient similarity search
+- **Email Alerts**: Sends email notifications when duplicates are detected (>80% similarity)
+- **Managed Identity**: All services use System-Assigned Managed Identity (no connection strings or API keys)
+- **One-Command Deployment**: Complete infrastructure and code deployment with a single PowerShell command
 
 ## Architecture
 
 ```
 ┌─────────────────┐     ┌──────────────┐     ┌─────────────────────┐
 │  Azure API      │────▶│  Event Grid  │────▶│  Azure Function     │
-│  Center         │     │  System Topic│     │  (Duplicate         │
+│  Center         │     │  Subscription│     │  (Duplicate         │
 │                 │     │              │     │   Detector)         │
 └─────────────────┘     └──────────────┘     └──────────┬──────────┘
                                                         │
-                                                        ▼
-                                             ┌─────────────────────┐
-                                             │  Application        │
-                                             │  Insights           │
-                                             └──────────┬──────────┘
-                                                        │
-                                                        ▼
-                                             ┌─────────────────────┐
-                                             │  Azure Monitor      │
-                                             │  Alert Rule         │
-                                             └──────────┬──────────┘
-                                                        │
-                                                        ▼
-                                             ┌─────────────────────┐
-                                             │  Email Notification │
-                                             └─────────────────────┘
+                        ┌───────────────────────────────┼───────────────────────────────┐
+                        │                               │                               │
+                        ▼                               ▼                               ▼
+             ┌─────────────────────┐      ┌─────────────────────┐      ┌─────────────────────┐
+             │  Azure OpenAI       │      │  Cosmos DB          │      │  Azure Monitor      │
+             │  (Embeddings)       │      │  (Vector Store)     │      │  (Email Alerts)     │
+             └─────────────────────┘      └─────────────────────┘      └─────────────────────┘
 ```
 
 ## Prerequisites
 
 - Azure subscription
-- Azure API Center instance
-- Azure CLI installed
+- Azure CLI installed and logged in
 - .NET 8.0 SDK
+- PowerShell 7+
 
-## Deployment
+## Quick Start - One Command Deployment
 
-### 1. Deploy Infrastructure
+Deploy everything with a single command:
 
-```bash
-# Login to Azure
-az login
+```powershell
+# Clone the repository
+git clone https://github.com/DeepMalh44/ApiDuplicateDetector.git
+cd ApiDuplicateDetector
 
-# Deploy the Bicep template
-az deployment group create \
-  --resource-group <your-resource-group> \
-  --template-file infra/api-duplicate-detector.bicep \
-  --parameters apiCenterName=<your-api-center-name> \
-               alertEmail=<your-email>
+# Deploy (creates all resources including API Center if needed)
+.\infra\deploy.ps1 -ResourceGroupName "my-resource-group" `
+                   -ApiCenterName "my-api-center" `
+                   -EnableSemanticAnalysis $true
 ```
 
-### 2. Deploy the Function
+### Deployment Parameters
 
-```bash
-# Build and publish
-dotnet publish -c Release -o ./publish
+| Parameter | Required | Description | Default |
+|-----------|----------|-------------|---------|
+| `ResourceGroupName` | Yes | Azure resource group name | - |
+| `ApiCenterName` | Yes | Azure API Center name | - |
+| `EnableSemanticAnalysis` | No | Enable Azure OpenAI + Cosmos DB | `$true` |
+| `AlertEmailAddress` | No | Email for duplicate alerts | Current user's email |
+| `Location` | No | Azure region | `eastus` |
+| `OpenAiLocation` | No | Azure OpenAI region (use different region if quota exceeded) | Same as Location |
 
-# Create deployment package
-cd publish && zip -r ../deploy.zip . && cd ..
+### Example with Custom Options
 
-# Deploy to Azure
-az functionapp deployment source config-zip \
-  --resource-group <your-resource-group> \
-  --name <function-app-name> \
-  --src deploy.zip
+```powershell
+.\infra\deploy.ps1 -ResourceGroupName "rg-api-governance" `
+                   -ApiCenterName "apic-enterprise" `
+                   -EnableSemanticAnalysis $true `
+                   -AlertEmailAddress "api-team@company.com" `
+                   -Location "eastus" `
+                   -OpenAiLocation "westus"  # Use different region for OpenAI quota
 ```
 
-### 3. Configure Event Grid Subscription
+## What Gets Deployed
 
-```bash
-# Create Event Grid subscription
-az eventgrid system-topic event-subscription create \
-  --name api-duplicate-detector-subscription \
-  --system-topic-name <api-center-topic-name> \
-  --resource-group <your-resource-group> \
-  --endpoint-type azurefunction \
-  --endpoint /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.Web/sites/<func-name>/functions/ApiDuplicateDetector \
-  --included-event-types Microsoft.ApiCenter.ApiDefinitionAdded Microsoft.ApiCenter.ApiDefinitionUpdated
-```
+The deployment script creates:
 
-## Configuration
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `SIMILARITY_THRESHOLD` | Minimum similarity score to flag as duplicate (0.0-1.0) | 0.7 |
-| `API_CENTER_NAME` | Name of the Azure API Center | Required |
-| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI endpoint (enables semantic analysis) | - |
-| `AZURE_OPENAI_EMBEDDING_MODEL` | Azure OpenAI embedding model name | text-embedding-ada-002 |
-| `COSMOS_DB_ENDPOINT` | Cosmos DB endpoint for vector storage (uses managed identity) | - |
-| `COSMOS_DB_DATABASE_NAME` | Cosmos DB database name | ApiDuplicateDetector |
-| `COSMOS_DB_CONTAINER_NAME` | Cosmos DB container name | ApiEmbeddings |
-
-## Managed Identity & RBAC
-
-The Function App uses **System-Assigned Managed Identity** for secure, keyless authentication to all Azure services. The following RBAC roles are required:
-
-| Resource | Role | Purpose |
-|----------|------|---------|
-| Storage Account | Storage Blob Data Owner | Function App file storage |
-| Storage Account | Storage Queue Data Contributor | Trigger queue access |
-| Storage Account | Storage Table Data Contributor | Durable functions state |
-| API Center | Azure API Center Data Reader | Read API definitions |
-| Resource Group | Contributor | Export API specifications (ARM operations) |
-| Azure OpenAI | Cognitive Services OpenAI User | Generate embeddings |
-| Cosmos DB (Control Plane) | Cosmos DB Account Contributor | Account management |
-| Cosmos DB (Data Plane) | Cosmos DB Built-in Data Contributor | Read/write API embeddings |
-
-> **Note**: Cosmos DB is configured with `disableLocalAuth: true` to enforce AAD-only authentication. The `Cosmos DB Built-in Data Contributor` SQL role (`00000000-0000-0000-0000-000000000002`) is required for data plane operations.
+| Resource | Description |
+|----------|-------------|
+| **Function App** | .NET 8 Isolated worker on Elastic Premium (EP1) |
+| **Storage Account** | Function App storage with managed identity auth |
+| **Application Insights** | Logging and monitoring |
+| **Log Analytics Workspace** | Query-based alerting |
+| **Azure OpenAI** | `text-embedding-ada-002` model for embeddings |
+| **Cosmos DB** | Vector store for API embeddings (AAD-only auth) |
+| **Action Group** | Email notification target |
+| **Scheduled Query Rule** | Monitors for duplicate detection logs |
+| **Event Grid Subscription** | Triggers function on API registration |
 
 ## How It Works
 
-1. **API Registration**: When an API definition is added or updated in API Center, an Event Grid event is fired
-2. **Event Processing**: The Azure Function receives the event and retrieves the API specification
-3. **Similarity Analysis**: The function compares the new API against all existing APIs using:
-   - Structural analysis of paths, methods, and schemas
-   - Optional semantic analysis using Azure OpenAI embeddings
-4. **Duplicate Detection**: If similarity exceeds the threshold, it's flagged as a potential duplicate
-5. **Alerting**: A `DuplicateApiDetected` log is written to Application Insights
-6. **Notification**: Azure Monitor scheduled query rule detects the log and sends an email alert
+1. **API Registration**: When an API definition is added to API Center, Event Grid fires an event
+2. **Function Trigger**: The Azure Function receives the event and retrieves the OpenAPI specification
+3. **Embedding Generation**: Azure OpenAI generates a vector embedding from the API spec
+4. **Similarity Search**: The embedding is compared against existing APIs in Cosmos DB
+5. **Duplicate Detection**: If similarity exceeds 80%, the API is flagged as a potential duplicate
+6. **Email Alert**: Azure Monitor detects the `DuplicateApiDetected` log and sends an email
 
-## Sample Alert
+## Sample Alert Email
 
-When duplicates are detected, you'll receive an alert like:
+When duplicates are detected, you'll receive an email like:
 
 ```
-DuplicateApiDetected: API 'petmanagementv2' has 2 potential duplicates. 
-Highest similarity: 65 %. APIs: petstoreapi, petregistryapi
+Subject: API Duplicate Detection Alert
+
+DuplicateApiDetected: API 'Pet Management API v2' is 87.5% similar to existing API 
+'Pet Store API'. Consider reviewing for potential consolidation.
+
+Similar APIs found:
+- Pet Store API (87.5% similarity)
+- Pet Registry API (82.3% similarity)
 ```
+
+## Security - Managed Identity
+
+All services use **System-Assigned Managed Identity** for authentication. No connection strings or API keys are stored.
+
+### RBAC Roles Assigned
+
+| Resource | Role | Purpose |
+|----------|------|---------|
+| Storage Account | Storage Blob Data Owner | Function App storage |
+| Storage Account | Storage Queue Data Contributor | Queue triggers |
+| Storage Account | Storage Table Data Contributor | Durable functions |
+| API Center | Azure API Center Data Reader | Read API definitions |
+| Resource Group | Contributor | Export API specifications |
+| Azure OpenAI | Cognitive Services OpenAI User | Generate embeddings |
+| Cosmos DB | Cosmos DB Built-in Data Contributor | Read/write embeddings |
+
+> **Note**: Cosmos DB uses `disableLocalAuth: true` to enforce AAD-only authentication.
+
+## Configuration
+
+Environment variables are automatically configured during deployment:
+
+| Setting | Description |
+|---------|-------------|
+| `API_CENTER_NAME` | Azure API Center name |
+| `AZURE_SUBSCRIPTION_ID` | Azure subscription ID |
+| `RESOURCE_GROUP_NAME` | Resource group name |
+| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI endpoint |
+| `AZURE_OPENAI_EMBEDDING_MODEL` | Embedding model deployment name |
+| `COSMOS_DB_ENDPOINT` | Cosmos DB endpoint |
+| `COSMOS_DB_DATABASE_NAME` | Database name (`ApiDuplicateDetector`) |
+| `COSMOS_DB_CONTAINER_NAME` | Container name (`ApiEmbeddings`) |
+| `SIMILARITY_THRESHOLD` | Detection threshold (`0.8`) |
+
+## Testing
+
+Register sample APIs to test duplicate detection:
+
+```powershell
+# Register first API
+az apic api register --resource-group "my-rg" `
+                     --service-name "my-apic" `
+                     --api-location "samples/pet-paradise-api.yaml"
+
+# Register similar API (should trigger alert)
+az apic api register --resource-group "my-rg" `
+                     --service-name "my-apic" `
+                     --api-location "samples/critter-catalog-api.yaml"
+```
+
+Check your email in ~1 minute for the duplicate detection alert.
 
 ## Project Structure
 
@@ -149,6 +172,7 @@ Highest similarity: 65 %. APIs: petstoreapi, petregistryapi
 │   └── ApiDuplicateDetectorFunction.cs  # Main Azure Function
 ├── Models/
 │   ├── ApiCenterEventData.cs            # Event Grid event model
+│   ├── ApiEmbedding.cs                  # Cosmos DB embedding model
 │   ├── ApiInfo.cs                       # API information model
 │   ├── ApiSimilarityResult.cs           # Similarity result model
 │   └── DuplicateDetectionReport.cs      # Detection report model
@@ -159,11 +183,32 @@ Highest similarity: 65 %. APIs: petstoreapi, petregistryapi
 │   ├── NotificationService.cs           # Logging/notifications
 │   └── VectorStoreService.cs            # Cosmos DB vector store
 ├── infra/
-│   └── api-duplicate-detector.bicep     # Infrastructure as Code
-├── .github/workflows/
-│   └── deploy-duplicate-detector.yml    # CI/CD pipeline
+│   ├── api-duplicate-detector.bicep     # Infrastructure as Code
+│   └── deploy.ps1                       # One-command deployment script
+├── samples/                             # Sample OpenAPI specs for testing
 ├── Program.cs                           # Function host configuration
 └── host.json                            # Function host settings
+```
+
+## Troubleshooting
+
+### OpenAI Quota Error
+If you get `InsufficientQuota` error, use a different region:
+```powershell
+.\infra\deploy.ps1 ... -OpenAiLocation "westus"
+```
+
+### Function Not Triggering
+Check Event Grid subscription status:
+```powershell
+az eventgrid event-subscription show --name "api-duplicate-detector-subscription" `
+    --source-resource-id "/subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ApiCenter/services/{apic}"
+```
+
+### View Logs
+```powershell
+az monitor app-insights query --app "{app-insights-name}" -g "{rg}" `
+    --analytics-query "traces | where timestamp > ago(30m) | order by timestamp desc"
 ```
 
 ## License
