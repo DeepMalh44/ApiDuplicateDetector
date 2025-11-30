@@ -97,13 +97,30 @@ az eventgrid system-topic event-subscription create \
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `SIMILARITY_THRESHOLD` | Minimum similarity score to flag as duplicate (0.0-1.0) | 0.5 |
+| `SIMILARITY_THRESHOLD` | Minimum similarity score to flag as duplicate (0.0-1.0) | 0.7 |
 | `API_CENTER_NAME` | Name of the Azure API Center | Required |
-| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI endpoint (optional, enables semantic analysis) | - |
-| `AZURE_OPENAI_DEPLOYMENT` | Azure OpenAI embedding deployment name | - |
-| `COSMOS_DB_ENDPOINT` | Cosmos DB endpoint (optional, for vector storage) | - |
-| `COSMOS_DB_DATABASE` | Cosmos DB database name | ApiDuplicateDetector |
-| `COSMOS_DB_CONTAINER` | Cosmos DB container name | ApiEmbeddings |
+| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI endpoint (enables semantic analysis) | - |
+| `AZURE_OPENAI_EMBEDDING_MODEL` | Azure OpenAI embedding model name | text-embedding-ada-002 |
+| `COSMOS_DB_ENDPOINT` | Cosmos DB endpoint for vector storage (uses managed identity) | - |
+| `COSMOS_DB_DATABASE_NAME` | Cosmos DB database name | ApiDuplicateDetector |
+| `COSMOS_DB_CONTAINER_NAME` | Cosmos DB container name | ApiEmbeddings |
+
+## Managed Identity & RBAC
+
+The Function App uses **System-Assigned Managed Identity** for secure, keyless authentication to all Azure services. The following RBAC roles are required:
+
+| Resource | Role | Purpose |
+|----------|------|---------|
+| Storage Account | Storage Blob Data Owner | Function App file storage |
+| Storage Account | Storage Queue Data Contributor | Trigger queue access |
+| Storage Account | Storage Table Data Contributor | Durable functions state |
+| API Center | Azure API Center Data Reader | Read API definitions |
+| Resource Group | Contributor | Export API specifications (ARM operations) |
+| Azure OpenAI | Cognitive Services OpenAI User | Generate embeddings |
+| Cosmos DB (Control Plane) | Cosmos DB Account Contributor | Account management |
+| Cosmos DB (Data Plane) | Cosmos DB Built-in Data Contributor | Read/write API embeddings |
+
+> **Note**: Cosmos DB is configured with `disableLocalAuth: true` to enforce AAD-only authentication. The `Cosmos DB Built-in Data Contributor` SQL role (`00000000-0000-0000-0000-000000000002`) is required for data plane operations.
 
 ## How It Works
 

@@ -32,6 +32,9 @@ param cosmosDbName string = 'cosmos-api-detector-${uniqueString(resourceGroup().
 @description('The location for Azure OpenAI (may differ from main location due to availability)')
 param openAiLocation string = 'eastus'
 
+@description('The location for Cosmos DB (may differ from main location due to availability)')
+param cosmosDbLocation string = 'westus2'
+
 // Storage Account for Function App - Using Managed Identity
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: storageAccountName
@@ -146,6 +149,34 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
   }
 }
 
+// Add semantic analysis app settings using siteConfig slot settings (conditional)
+// Uses managed identity for both Azure OpenAI and Cosmos DB (no API keys or connection strings)
+resource functionAppSemanticSettings 'Microsoft.Web/sites/config@2023-01-01' = if (enableSemanticAnalysis) {
+  parent: functionApp
+  name: 'appsettings'
+  properties: {
+    AzureWebJobsStorage__accountName: storageAccount.name
+    FUNCTIONS_EXTENSION_VERSION: '~4'
+    FUNCTIONS_WORKER_RUNTIME: 'dotnet-isolated'
+    APPINSIGHTS_INSTRUMENTATIONKEY: appInsights.properties.InstrumentationKey
+    APPLICATIONINSIGHTS_CONNECTION_STRING: appInsights.properties.ConnectionString
+    API_CENTER_SUBSCRIPTION_ID: subscription().subscriptionId
+    API_CENTER_RESOURCE_GROUP: resourceGroup().name
+    API_CENTER_NAME: apiCenterName
+    SIMILARITY_THRESHOLD: similarityThreshold
+    NOTIFICATION_WEBHOOK_URL: notificationWebhookUrl
+    ENABLE_SEMANTIC_ANALYSIS: 'true'
+    // Azure OpenAI settings - uses DefaultAzureCredential (managed identity)
+    AZURE_OPENAI_ENDPOINT: 'https://${openAiName}.openai.azure.com/'
+    AZURE_OPENAI_EMBEDDING_MODEL: 'text-embedding-ada-002'
+    // Cosmos DB settings - uses DefaultAzureCredential (managed identity) with COSMOS_DB_ENDPOINT
+    // Note: COSMOS_DB_CONNECTION_STRING is not used when disableLocalAuth is true
+    COSMOS_DB_ENDPOINT: 'https://${cosmosDbName}.documents.azure.com:443/'
+    COSMOS_DB_DATABASE_NAME: 'ApiDuplicateDetector'
+    COSMOS_DB_CONTAINER_NAME: 'ApiEmbeddings'
+  }
+}
+
 // Storage Blob Data Owner role for Function App
 resource storageBlobOwnerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(storageAccount.id, functionApp.id, 'Storage Blob Data Owner')
@@ -179,6 +210,145 @@ resource storageTableRole 'Microsoft.Authorization/roleAssignments@2022-04-01' =
   }
 }
 
+// ==========================================
+// SEMANTIC ANALYSIS RESOURCES (Conditional)
+// ==========================================
+
+// Azure OpenAI for embedding generation
+resource openAiAccount 'Microsoft.CognitiveServices/accounts@2024-10-01' = if (enableSemanticAnalysis) {
+  name: openAiName
+  location: openAiLocation
+  kind: 'OpenAI'
+  sku: {
+    name: 'S0'
+  }
+  properties: {
+    customSubDomainName: openAiName
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+// Deploy text-embedding-ada-002 model for embeddings
+resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = if (enableSemanticAnalysis) {
+  parent: openAiAccount
+  name: 'text-embedding-ada-002'
+  sku: {
+    name: 'Standard'
+    capacity: 120
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: 'text-embedding-ada-002'
+      version: '2'
+    }
+  }
+}
+
+// Azure Cosmos DB for vector storage
+// Uses AAD-only authentication (disableLocalAuth: true) for enhanced security
+resource cosmosDbAccount 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' = if (enableSemanticAnalysis) {
+  name: cosmosDbName
+  location: cosmosDbLocation
+  kind: 'GlobalDocumentDB'
+  properties: {
+    databaseAccountOfferType: 'Standard'
+    disableLocalAuth: true  // Enforce AAD-only authentication
+    locations: [
+      {
+        locationName: cosmosDbLocation
+        failoverPriority: 0
+        isZoneRedundant: false
+      }
+    ]
+    consistencyPolicy: {
+      defaultConsistencyLevel: 'Session'
+    }
+    capabilities: [
+      {
+        name: 'EnableServerless'
+      }
+    ]
+  }
+}
+
+// Cosmos DB Database
+resource cosmosDatabase 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2024-11-15' = if (enableSemanticAnalysis) {
+  parent: cosmosDbAccount
+  name: 'ApiDuplicateDetector'
+  properties: {
+    resource: {
+      id: 'ApiDuplicateDetector'
+    }
+  }
+}
+
+// Cosmos DB Container for API Embeddings
+resource cosmosContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-11-15' = if (enableSemanticAnalysis) {
+  parent: cosmosDatabase
+  name: 'ApiEmbeddings'
+  properties: {
+    resource: {
+      id: 'ApiEmbeddings'
+      partitionKey: {
+        paths: [
+          '/apiName'
+        ]
+        kind: 'Hash'
+      }
+      indexingPolicy: {
+        indexingMode: 'consistent'
+        automatic: true
+        includedPaths: [
+          {
+            path: '/*'
+          }
+        ]
+        excludedPaths: [
+          {
+            path: '/embedding/*'
+          }
+        ]
+      }
+    }
+  }
+}
+
+// Role assignment for Function App to access Cosmos DB (control plane - for management operations)
+resource cosmosDbContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableSemanticAnalysis) {
+  name: guid(cosmosDbAccount.id, functionApp.id, 'Cosmos DB Contributor')
+  scope: cosmosDbAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5bd9cd88-fe45-4216-938b-f97437e15450')
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Cosmos DB Built-in Data Contributor role for data plane operations (read/write data)
+// This is required when using AAD-only authentication (disableLocalAuth: true)
+// Role ID: 00000000-0000-0000-0000-000000000002 is the built-in "Cosmos DB Built-in Data Contributor"
+resource cosmosDbDataContributorRole 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-11-15' = if (enableSemanticAnalysis) {
+  parent: cosmosDbAccount
+  name: guid(cosmosDbAccount.id, functionApp.id, 'Cosmos DB Data Contributor')
+  properties: {
+    roleDefinitionId: '${cosmosDbAccount.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
+    principalId: functionApp.identity.principalId
+    scope: cosmosDbAccount.id
+  }
+}
+
+// Role assignment for Function App to access Azure OpenAI
+resource openAiUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableSemanticAnalysis) {
+  name: guid(openAiAccount.id, functionApp.id, 'Cognitive Services OpenAI User')
+  scope: openAiAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // Reference to existing API Center
 resource apiCenter 'Microsoft.ApiCenter/services@2024-03-01' existing = {
   name: apiCenterName
@@ -190,6 +360,16 @@ resource roleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: apiCenter
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'c7244dfb-f447-457d-b2ba-3999044d1706')
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Contributor role on resource group for API Center ARM operations (required for ExportSpecification)
+resource resourceGroupContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(resourceGroup().id, functionApp.id, 'Contributor')
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c')
     principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
   }
@@ -277,3 +457,10 @@ output functionAppPrincipalId string = functionApp.identity.principalId
 output eventGridTopicName string = eventGridTopic.name
 output appInsightsName string = appInsights.name
 output storageAccountName string = storageAccount.name
+
+// Semantic analysis outputs (conditional)
+output openAiEndpoint string = enableSemanticAnalysis ? 'https://${openAiName}.openai.azure.com/' : ''
+output openAiResourceName string = enableSemanticAnalysis ? openAiName : ''
+output cosmosDbEndpoint string = enableSemanticAnalysis ? 'https://${cosmosDbName}.documents.azure.com:443/' : ''
+output cosmosDbResourceName string = enableSemanticAnalysis ? cosmosDbName : ''
+output semanticAnalysisEnabled bool = enableSemanticAnalysis

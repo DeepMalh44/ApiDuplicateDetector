@@ -1,0 +1,183 @@
+openapi: 3.0.3
+info:
+  title: Pet Adoption API
+  description: API for managing pet adoptions and rescue animals
+  version: 1.0.0
+servers:
+  - url: https://api.petadoption.example.com/v1
+paths:
+  /pets:
+    get:
+      summary: Get all available pets for adoption
+      operationId: listAvailablePets
+      tags:
+        - pets
+      parameters:
+        - name: status
+          in: query
+          description: Filter by adoption status
+          schema:
+            type: string
+            enum: [available, pending, adopted]
+        - name: species
+          in: query
+          description: Filter by species type
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of pets available for adoption
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Pet'
+    post:
+      summary: Add a new pet for adoption
+      operationId: addPetForAdoption
+      tags:
+        - pets
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Pet'
+      responses:
+        '201':
+          description: Pet added successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pet'
+  /pets/{petId}:
+    get:
+      summary: Get pet details by ID
+      operationId: getPetById
+      tags:
+        - pets
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Pet details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pet'
+        '404':
+          description: Pet not found
+    put:
+      summary: Update pet information
+      operationId: updatePet
+      tags:
+        - pets
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Pet'
+      responses:
+        '200':
+          description: Pet updated successfully
+    delete:
+      summary: Remove pet from adoption listing
+      operationId: deletePet
+      tags:
+        - pets
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Pet removed from listing
+  /adoptions:
+    get:
+      summary: Get all adoption applications
+      operationId: listAdoptions
+      tags:
+        - adoptions
+      responses:
+        '200':
+          description: List of adoption applications
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Adoption'
+    post:
+      summary: Submit adoption application
+      operationId: submitAdoptionApplication
+      tags:
+        - adoptions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Adoption'
+      responses:
+        '201':
+          description: Application submitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Adoption'
+components:
+  schemas:
+    Pet:
+      type: object
+      required:
+        - name
+        - species
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        species:
+          type: string
+        breed:
+          type: string
+        age:
+          type: integer
+        status:
+          type: string
+          enum: [available, pending, adopted]
+        description:
+          type: string
+    Adoption:
+      type: object
+      required:
+        - petId
+        - applicantName
+      properties:
+        id:
+          type: string
+        petId:
+          type: string
+        applicantName:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        status:
+          type: string
+          enum: [pending, approved, rejected]

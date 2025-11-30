@@ -286,36 +286,62 @@ public class ApiCenterService : IApiCenterService
     {
         _logger.LogWarning("=== GetApiDefinitionContentAsync START: {ApiName}/{Version}/{Definition} ===",
             apiName, versionName, definitionName);
-        try
+        
+        // Retry logic to handle race condition where spec isn't immediately available after definition creation
+        const int maxRetries = 5;
+        const int initialDelayMs = 2000; // Start with 2 second delay
+        
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
         {
-            var armClient = new ArmClient(_credential);
-            var subscription = armClient.GetSubscriptionResource(
-                new Azure.Core.ResourceIdentifier($"/subscriptions/{_subscriptionId}"));
+            try
+            {
+                var armClient = new ArmClient(_credential);
+                var subscription = armClient.GetSubscriptionResource(
+                    new Azure.Core.ResourceIdentifier($"/subscriptions/{_subscriptionId}"));
 
-            var resourceGroup = await subscription.GetResourceGroupAsync(_resourceGroup);
-            var apiCenterService = await resourceGroup.Value.GetApiCenterServiceAsync(_apiCenterName);
+                var resourceGroup = await subscription.GetResourceGroupAsync(_resourceGroup);
+                var apiCenterService = await resourceGroup.Value.GetApiCenterServiceAsync(_apiCenterName);
+                
+                var workspace = await apiCenterService.Value.GetApiCenterWorkspaceAsync("default");
+                _logger.LogWarning("Getting API resource: {ApiName}", apiName);
+                var api = await workspace.Value.GetApiCenterApiAsync(apiName);
+                _logger.LogWarning("Getting version resource: {Version}", versionName);
+                var version = await api.Value.GetApiCenterApiVersionAsync(versionName);
+                _logger.LogWarning("Getting definition resource: {Definition}", definitionName);
+                var definition = await version.Value.GetApiCenterApiDefinitionAsync(definitionName);
+                
+                _logger.LogWarning("Calling ExportSpecificationAsync (attempt {Attempt}/{Max})...", attempt, maxRetries);
+                var exportResult = await definition.Value.ExportSpecificationAsync(WaitUntil.Completed);
+                
+                if (exportResult?.Value?.Value != null && exportResult.Value.Value.Length > 0)
+                {
+                    _logger.LogWarning("Export completed successfully, result length: {Length}", exportResult.Value.Value.Length);
+                    return exportResult.Value.Value;
+                }
+                
+                _logger.LogWarning("Export returned empty content on attempt {Attempt}, will retry...", attempt);
+            }
+            catch (Azure.RequestFailedException ex) when (ex.Status == 404)
+            {
+                _logger.LogWarning("Got 404 on attempt {Attempt}/{Max}, spec may not be ready yet. Waiting...", 
+                    attempt, maxRetries);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("ERROR in GetApiDefinitionContentAsync (attempt {Attempt}): {Error}", 
+                    attempt, ex.Message);
+            }
             
-            var workspace = await apiCenterService.Value.GetApiCenterWorkspaceAsync("default");
-            _logger.LogWarning("Getting API resource: {ApiName}", apiName);
-            var api = await workspace.Value.GetApiCenterApiAsync(apiName);
-            _logger.LogWarning("Getting version resource: {Version}", versionName);
-            var version = await api.Value.GetApiCenterApiVersionAsync(versionName);
-            _logger.LogWarning("Getting definition resource: {Definition}", definitionName);
-            var definition = await version.Value.GetApiCenterApiDefinitionAsync(definitionName);
-            
-            _logger.LogWarning("Calling ExportSpecificationAsync...");
-            var exportResult = await definition.Value.ExportSpecificationAsync(WaitUntil.Completed);
-            _logger.LogWarning("Export completed, result length: {Length}", exportResult?.Value?.Value?.Length ?? 0);
-            return exportResult?.Value?.Value;
+            if (attempt < maxRetries)
+            {
+                var delay = initialDelayMs * attempt; // Progressive delay: 2s, 4s, 6s, 8s, 10s
+                _logger.LogWarning("Waiting {Delay}ms before retry...", delay);
+                await Task.Delay(delay);
+            }
         }
-        catch (Exception ex)
-        {
-            _logger.LogWarning("ERROR in GetApiDefinitionContentAsync: {Error}", ex.Message);
-            _logger.LogError(ex, 
-                "Error getting API definition content for {ApiName}/{Version}/{Definition}",
-                apiName, versionName, definitionName);
-            return null;
-        }
+        
+        _logger.LogWarning("Failed to get spec content after {Max} attempts", maxRetries);
+        return null;
     }
 }
 

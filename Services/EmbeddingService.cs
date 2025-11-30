@@ -2,6 +2,7 @@ using System.ClientModel;
 using System.Text;
 using ApiDuplicateDetector.Models;
 using Azure.AI.OpenAI;
+using Azure.Identity;
 using Microsoft.Extensions.Logging;
 using OpenAI.Embeddings;
 
@@ -23,15 +24,26 @@ public class EmbeddingService : IEmbeddingService
         
         var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
             ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT not configured");
-        var apiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY")
-            ?? throw new InvalidOperationException("AZURE_OPENAI_API_KEY not configured");
+        var apiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY");
         _modelName = Environment.GetEnvironmentVariable("AZURE_OPENAI_EMBEDDING_MODEL") 
             ?? "text-embedding-ada-002";
 
-        // Create the Azure OpenAI client
-        var azureClient = new AzureOpenAIClient(
-            new Uri(endpoint),
-            new ApiKeyCredential(apiKey));
+        // Create the Azure OpenAI client - use managed identity if no API key provided
+        AzureOpenAIClient azureClient;
+        if (!string.IsNullOrEmpty(apiKey))
+        {
+            azureClient = new AzureOpenAIClient(
+                new Uri(endpoint),
+                new ApiKeyCredential(apiKey));
+            _logger.LogInformation("EmbeddingService using API key authentication");
+        }
+        else
+        {
+            azureClient = new AzureOpenAIClient(
+                new Uri(endpoint),
+                new DefaultAzureCredential());
+            _logger.LogInformation("EmbeddingService using managed identity authentication");
+        }
         
         _embeddingClient = azureClient.GetEmbeddingClient(_modelName);
         

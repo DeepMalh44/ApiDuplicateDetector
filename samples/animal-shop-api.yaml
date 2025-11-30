@@ -1,0 +1,202 @@
+openapi: 3.0.3
+info:
+  title: Animal Shop API
+  description: An API for managing animals in an animal shop. Provides CRUD operations for animals, purchases, and customers.
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@animalshop.com
+servers:
+  - url: https://api.animalshop.com/v1
+paths:
+  /animals:
+    get:
+      summary: List all animals
+      description: Returns a list of all animals in the shop
+      operationId: listAnimals
+      tags:
+        - animals
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of animals to return
+          schema:
+            type: integer
+            default: 20
+        - name: availability
+          in: query
+          description: Filter by animal availability
+          schema:
+            type: string
+            enum: [available, reserved, sold]
+      responses:
+        '200':
+          description: A list of animals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Animal'
+    post:
+      summary: Add a new animal
+      description: Add a new animal to the shop inventory
+      operationId: createAnimal
+      tags:
+        - animals
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Animal'
+      responses:
+        '201':
+          description: Animal added successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Animal'
+  /animals/{animalId}:
+    get:
+      summary: Get an animal by ID
+      description: Returns a single animal by its ID
+      operationId: getAnimalById
+      tags:
+        - animals
+      parameters:
+        - name: animalId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: An animal object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Animal'
+        '404':
+          description: Animal not found
+    put:
+      summary: Update an animal
+      description: Update an existing animal in the shop
+      operationId: updateAnimal
+      tags:
+        - animals
+      parameters:
+        - name: animalId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Animal'
+      responses:
+        '200':
+          description: Animal updated successfully
+    delete:
+      summary: Remove an animal
+      description: Remove an animal from the shop inventory
+      operationId: deleteAnimal
+      tags:
+        - animals
+      parameters:
+        - name: animalId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Animal removed successfully
+  /purchases:
+    get:
+      summary: List all purchases
+      description: Returns a list of all animal purchases
+      operationId: listPurchases
+      tags:
+        - purchases
+      responses:
+        '200':
+          description: A list of purchases
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Purchase'
+    post:
+      summary: Make a purchase
+      description: Purchase an animal from the shop
+      operationId: createPurchase
+      tags:
+        - purchases
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Purchase'
+      responses:
+        '201':
+          description: Purchase completed successfully
+components:
+  schemas:
+    Animal:
+      type: object
+      required:
+        - name
+        - type
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the animal
+        name:
+          type: string
+          description: Name of the animal
+        type:
+          type: string
+          description: Type of animal (dog, cat, bird, etc.)
+        breed:
+          type: string
+          description: Breed of the animal
+        age:
+          type: integer
+          description: Age of the animal in years
+        availability:
+          type: string
+          enum: [available, reserved, sold]
+          description: Current availability status
+        price:
+          type: number
+          format: float
+          description: Price of the animal
+    Purchase:
+      type: object
+      required:
+        - animalId
+        - quantity
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the purchase
+        animalId:
+          type: string
+          description: ID of the animal being purchased
+        quantity:
+          type: integer
+          description: Number of animals purchased
+        deliveryDate:
+          type: string
+          format: date-time
+          description: Scheduled delivery date
+        status:
+          type: string
+          enum: [pending, confirmed, delivered]
+          description: Current status of the purchase

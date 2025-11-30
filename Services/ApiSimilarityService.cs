@@ -80,8 +80,12 @@ public class ApiSimilarityService : IApiSimilarityService
         try
         {
             // Generate embedding for the new API
+            _logger.LogWarning("=== SEMANTIC SEARCH START for {ApiName} ===", newApi.Name);
             var embeddingText = _embeddingService!.CreateEmbeddingText(newApi);
+            _logger.LogWarning("Embedding text length: {Length}", embeddingText.Length);
+            
             var queryEmbedding = await _embeddingService.GenerateEmbeddingAsync(embeddingText);
+            _logger.LogWarning("Generated embedding with {Dimensions} dimensions", queryEmbedding.Length);
 
             if (queryEmbedding.Length == 0)
             {
@@ -90,14 +94,28 @@ public class ApiSimilarityService : IApiSimilarityService
             }
 
             // Search for similar APIs using vector search
+            _logger.LogWarning("Searching vector store for similar APIs (excluding: {Exclude})...", newApi.Name);
             var semanticMatches = await _vectorStoreService!.FindSimilarApisAsync(
                 queryEmbedding, topK: 20, excludeApiName: newApi.Name);
+            
+            _logger.LogWarning("Vector store returned {Count} matches", semanticMatches.Count);
+            
+            // Log all matches with their scores
+            foreach (var m in semanticMatches)
+            {
+                _logger.LogWarning("  - {ApiName}: similarity = {Score:F4} (threshold: {Threshold})", 
+                    m.ApiEmbedding.ApiName, m.SimilarityScore, threshold);
+            }
 
             foreach (var match in semanticMatches)
             {
                 // Only include results above threshold
                 if (match.SimilarityScore < threshold)
+                {
+                    _logger.LogWarning("  Skipping {ApiName} - score {Score:F4} below threshold {Threshold}", 
+                        match.ApiEmbedding.ApiName, match.SimilarityScore, threshold);
                     continue;
+                }
 
                 // Convert ApiEmbedding back to ApiInfo for comparison
                 var existingApi = new ApiInfo
