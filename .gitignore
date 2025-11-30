@@ -2,6 +2,8 @@
 bin/
 obj/
 deploy-output/
+publish/
+publish-*/
 *.zip
 
 # Local settings (contains secrets)
