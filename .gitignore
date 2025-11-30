@@ -9,5 +9,5 @@ local.settings.json
 
 # IDE
 .vs/
-.vscode/
+
 *.user

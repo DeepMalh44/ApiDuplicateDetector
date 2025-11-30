@@ -47,7 +47,7 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     supportsHttpsTrafficOnly: true
     minimumTlsVersion: 'TLS1_2'
     allowBlobPublicAccess: false
-    allowSharedKeyAccess: true
+    allowSharedKeyAccess: false  // Enforce managed identity authentication
     publicNetworkAccess: 'Enabled'
     networkAcls: {
       bypass: 'AzureServices'
@@ -254,6 +254,7 @@ resource cosmosDbAccount 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' = if
   properties: {
     databaseAccountOfferType: 'Standard'
     disableLocalAuth: true  // Enforce AAD-only authentication
+    publicNetworkAccess: 'Enabled'  // Required for Function App access (use private endpoints for production)
     locations: [
       {
         locationName: cosmosDbLocation
@@ -385,6 +386,31 @@ resource eventGridTopic 'Microsoft.EventGrid/systemTopics@2023-12-15-preview' = 
   }
 }
 
+// Event Grid Subscription - Uses Azure Function destination (no webhook validation issues)
+resource eventGridSubscription 'Microsoft.EventGrid/systemTopics/eventSubscriptions@2023-12-15-preview' = {
+  parent: eventGridTopic
+  name: 'api-duplicate-detector-subscription'
+  properties: {
+    destination: {
+      endpointType: 'AzureFunction'
+      properties: {
+        resourceId: '${functionApp.id}/functions/ApiDuplicateDetector'
+        maxEventsPerBatch: 1
+        preferredBatchSizeInKilobytes: 64
+      }
+    }
+    filter: {
+      includedEventTypes: [
+        'Microsoft.ApiCenter.ApiDefinitionAdded'
+      ]
+    }
+    eventDeliverySchema: 'EventGridSchema'
+    retryPolicy: {
+      maxDeliveryAttempts: 30
+      eventTimeToLiveInMinutes: 1440
+    }
+  }
+}
 
 // Email address for notifications
 @description('Email address for duplicate API detection alerts')
