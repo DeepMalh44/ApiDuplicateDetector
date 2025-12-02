@@ -1,0 +1,158 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Arithmetic Operations API",
+    "description": "A comprehensive API for performing basic arithmetic computations",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://api.arithmetic-ops.example.com/v1"
+    }
+  ],
+  "paths": {
+    "/compute/addition": {
+      "post": {
+        "operationId": "performAddition",
+        "summary": "Compute the sum of two numbers",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TwoNumbers"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Addition result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputationResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/compute/subtraction": {
+      "post": {
+        "operationId": "performSubtraction",
+        "summary": "Compute the difference between two numbers",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TwoNumbers"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Subtraction result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputationResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/compute/multiplication": {
+      "post": {
+        "operationId": "performMultiplication",
+        "summary": "Compute the product of two numbers",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TwoNumbers"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Multiplication result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputationResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/compute/division": {
+      "post": {
+        "operationId": "performDivision",
+        "summary": "Compute the quotient of two numbers",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TwoNumbers"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Division result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputationResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "TwoNumbers": {
+        "type": "object",
+        "properties": {
+          "firstNumber": {
+            "type": "number",
+            "description": "The first operand"
+          },
+          "secondNumber": {
+            "type": "number",
+            "description": "The second operand"
+          }
+        },
+        "required": ["firstNumber", "secondNumber"]
+      },
+      "ComputationResult": {
+        "type": "object",
+        "properties": {
+          "output": {
+            "type": "number",
+            "description": "The computed result"
+          },
+          "operation": {
+            "type": "string",
+            "description": "The operation performed"
+          }
+        }
+      }
+    }
+  }
+}

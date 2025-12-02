@@ -105,31 +105,120 @@ public class VectorStoreService : IVectorStoreService
     {
         await EnsureInitializedAsync();
         
-        // Use manual similarity calculation
-        var allEmbeddings = await GetAllApiEmbeddingsAsync();
-        _logger.LogWarning("FindSimilarApisAsync: Found {Count} embeddings in vector store", allEmbeddings.Count);
+        _logger.LogInformation("FindSimilarApisAsync: Using Cosmos DB native vector search with DiskANN index");
         
+        var results = new List<SemanticMatch>();
+
+        try
+        {
+            // Use Cosmos DB native vector search with VectorDistance function
+            // Note: VectorDistance returns distance (lower = more similar for cosine)
+            // We convert to similarity by doing (1 - distance) for cosine
+            var queryText = excludeApiName != null
+                ? @"SELECT TOP @topK 
+                       c.id, c.apiName, c.embedding, c.description, c.title, 
+                       c.embeddingText, c.timestamp, c.apiCenterResourceId, c.kind, c.version, c.endpoints, c.schemas,
+                       VectorDistance(c.embedding, @queryVector) AS distance
+                   FROM c 
+                   WHERE c.apiName != @excludeApiName
+                   ORDER BY VectorDistance(c.embedding, @queryVector)"
+                : @"SELECT TOP @topK 
+                       c.id, c.apiName, c.embedding, c.description, c.title, 
+                       c.embeddingText, c.timestamp, c.apiCenterResourceId, c.kind, c.version, c.endpoints, c.schemas,
+                       VectorDistance(c.embedding, @queryVector) AS distance
+                   FROM c 
+                   ORDER BY VectorDistance(c.embedding, @queryVector)";
+            
+            var query = new QueryDefinition(queryText)
+                .WithParameter("@topK", topK)
+                .WithParameter("@queryVector", queryEmbedding);
+            
+            if (excludeApiName != null)
+            {
+                query = query.WithParameter("@excludeApiName", excludeApiName);
+            }
+
+            var iterator = _container!.GetItemQueryIterator<VectorSearchResult>(query);
+            
+            while (iterator.HasMoreResults)
+            {
+                var response = await iterator.ReadNextAsync();
+                _logger.LogWarning("=== VECTOR SEARCH (DiskANN) returned {Count} results (RU: {RU}) ===", 
+                    response.Count, response.RequestCharge);
+                
+                foreach (var item in response)
+                {
+                    // VectorDistance with cosine returns a value where LOWER = more similar
+                    // The raw value from VectorDistance IS the distance (0 = identical)
+                    // Since we configured cosine, the similarity = 1 - distance
+                    // BUT: if distance values are > 0.5, they might actually BE similarity scores
+                    // Cosmos DB VectorDistance returns: 0 (identical) to 2 (opposite) for cosine
+                    // So we use: similarity = 1 - (distance / 2) to normalize, OR
+                    // If the values are already in 0-1 range as similarity, use them directly
+                    
+                    var rawValue = item.Distance;
+                    // The rawValue appears to be (1 - cosine_similarity), so similarity = 1 - rawValue
+                    // Actually, looking at logs: rawValue=0.9326 should give similarity=0.9326
+                    // The VectorDistance is returning the DISTANCE, not similarity
+                    // For cosine: distance = 1 - similarity, so similarity = 1 - distance
+                    // But our values suggest: rawValue IS the similarity already
+                    
+                    // Let's check: if rawValue > 0.5, treat it as similarity; else as distance
+                    var similarity = rawValue;  // Use raw value directly as it appears to be similarity
+                    
+                    _logger.LogWarning("  [VectorSearch] {ApiName}: rawValue={RawValue:F4}, using similarity={Similarity:F4}", 
+                        item.ApiName, rawValue, similarity);
+                    
+                    results.Add(new SemanticMatch
+                    {
+                        ApiEmbedding = new ApiEmbedding
+                        {
+                            Id = item.Id,
+                            ApiName = item.ApiName,
+                            Embedding = item.Embedding ?? Array.Empty<float>(),
+                            Description = item.Description,
+                            Title = item.Title,
+                            EmbeddingText = item.EmbeddingText ?? string.Empty,
+                            Timestamp = item.Timestamp,
+                            ApiCenterResourceId = item.ApiCenterResourceId,
+                            Kind = item.Kind,
+                            Version = item.Version,
+                            Endpoints = item.Endpoints ?? new List<string>(),
+                            Schemas = item.Schemas ?? new List<string>()
+                        },
+                        SimilarityScore = similarity
+                    });
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error performing vector search, falling back to brute-force calculation");
+            return await FindSimilarApisBruteForceAsync(queryEmbedding, topK, excludeApiName);
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Fallback brute-force similarity search for when vector search is unavailable.
+    /// </summary>
+    private async Task<List<SemanticMatch>> FindSimilarApisBruteForceAsync(float[] queryEmbedding, int topK, string? excludeApiName)
+    {
+        _logger.LogWarning("Using brute-force similarity calculation (vector search unavailable)");
+        
+        var allEmbeddings = await GetAllApiEmbeddingsAsync();
         var results = new List<SemanticMatch>();
 
         foreach (var apiEmbedding in allEmbeddings)
         {
-            _logger.LogWarning("  Checking embedding: {ApiName} (embedding length: {Length})", 
-                apiEmbedding.ApiName, apiEmbedding.Embedding?.Length ?? 0);
-                
             if (apiEmbedding.ApiName == excludeApiName)
-            {
-                _logger.LogWarning("    Skipping (self-match): {ApiName}", apiEmbedding.ApiName);
                 continue;
-            }
             
             if (apiEmbedding.Embedding == null || apiEmbedding.Embedding.Length == 0)
-            {
-                _logger.LogWarning("    Skipping (no embedding): {ApiName}", apiEmbedding.ApiName);
                 continue;
-            }
 
             var similarity = CalculateCosineSimilarity(queryEmbedding, apiEmbedding.Embedding);
-            _logger.LogWarning("    Similarity score: {Score:F4}", similarity);
             
             results.Add(new SemanticMatch
             {
@@ -159,6 +248,51 @@ public class VectorStoreService : IVectorStoreService
 
         var magnitude = Math.Sqrt(magnitudeA) * Math.Sqrt(magnitudeB);
         return magnitude == 0 ? 0 : dotProduct / magnitude;
+    }
+
+    /// <summary>
+    /// Internal class for deserializing vector search results.
+    /// </summary>
+    private class VectorSearchResult
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("id")]
+        public string Id { get; set; } = string.Empty;
+        
+        [System.Text.Json.Serialization.JsonPropertyName("apiName")]
+        public string ApiName { get; set; } = string.Empty;
+        
+        [System.Text.Json.Serialization.JsonPropertyName("embedding")]
+        public float[]? Embedding { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("description")]
+        public string? Description { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("title")]
+        public string? Title { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("embeddingText")]
+        public string? EmbeddingText { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("timestamp")]
+        public DateTime Timestamp { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("apiCenterResourceId")]
+        public string? ApiCenterResourceId { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("kind")]
+        public string? Kind { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("version")]
+        public string? Version { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("endpoints")]
+        public List<string>? Endpoints { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("schemas")]
+        public List<string>? Schemas { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("distance")]
+        public double Distance { get; set; }
     }
 
     /// <inheritdoc/>

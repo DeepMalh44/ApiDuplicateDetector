@@ -135,15 +135,28 @@ public class ApiDuplicateDetectorFunction
                 _logger.LogWarning("⚠️ Found {Count} potential duplicate(s) for API '{Name}'",
                     duplicates.Count, newApi.Name);
                 
-                // Emit custom event for Azure Monitor Alert
-                // This structured log will be picked up by Application Insights and can trigger alerts
+                // Build detailed duplicate info for the alert
+                var topDuplicate = duplicates.OrderByDescending(d => d.OverallScore).First();
+                var duplicateDetails = string.Join(" | ", duplicates.Take(3).Select(d => 
+                    $"{d.ExistingApi.Name} ({d.OverallScore:P0} match, Semantic: {d.SemanticSimilarityScore:P0})"));
+                
+                // Emit custom event for Azure Monitor Alert with rich details
+                // Format: [ALERT_SUBJECT] followed by details - the subject part will be used in email
                 _logger.LogWarning(
-                    "DuplicateApiDetected: API '{ApiName}' has {DuplicateCount} potential duplicates. " +
-                    "Highest similarity: {HighestSimilarity:P0}. APIs: {DuplicateNames}",
+                    "[API DUPLICATE ALERT: {NewApi} ↔ {TopDuplicate}] " +
+                    "New API '{NewApiName}' is a potential duplicate of existing API '{TopDuplicateName}'. " +
+                    "Similarity Score: {SimilarityScore:P0} (Semantic: {SemanticScore:P0}). " +
+                    "Total duplicates found: {DuplicateCount}. " +
+                    "All matches: {AllDuplicates}. " +
+                    "Action Required: Review APIs for consolidation.",
                     newApi.Name,
+                    topDuplicate.ExistingApi.Name,
+                    newApi.Name,
+                    topDuplicate.ExistingApi.Name,
+                    topDuplicate.OverallScore,
+                    topDuplicate.SemanticSimilarityScore,
                     duplicates.Count,
-                    duplicates.Max(d => d.OverallScore),
-                    string.Join(", ", duplicates.Select(d => d.ExistingApi.Name)));
+                    duplicateDetails);
             }
             else
             {
